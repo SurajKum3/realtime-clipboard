@@ -1,0 +1,135 @@
+{
+  "brand_identity": {
+    "name": "OnBoard.in",
+    "mission": "The friction-free bridge between your devices.",
+    "tone": "Premium, Fast, Effortless, Invisible Tech.",
+    "archetype": "Swiss Utility with a Soft Human Touch.",
+    "theme": "light"
+  },
+  "typography": {
+    "font_family": {
+      "heading": "Manrope, sans-serif",
+      "body": "Inter, sans-serif",
+      "mono": "JetBrains Mono, monospace"
+    },
+    "scale": {
+      "h1": "text-5xl md:text-7xl font-extrabold tracking-tight leading-tight",
+      "h2": "text-3xl md:text-4xl font-bold tracking-tight",
+      "h3": "text-2xl font-semibold tracking-normal",
+      "body_lg": "text-lg md:text-xl font-medium leading-relaxed",
+      "body": "text-base font-normal leading-relaxed text-slate-600",
+      "caption": "text-sm font-medium text-slate-400 uppercase tracking-widest"
+    },
+    "imports": [
+      "@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Manrope:wght@400;600;700;800&display=swap');"
+    ]
+  },
+  "colors": {
+    "primary": {
+      "DEFAULT": "#4F46E5",
+      "foreground": "#FFFFFF",
+      "hover": "#4338CA",
+      "active": "#3730A3"
+    },
+    "background": {
+      "DEFAULT": "#F8FAFC",
+      "paper": "#FFFFFF",
+      "subtle": "#F1F5F9"
+    },
+    "text": {
+      "primary": "#0F172A",
+      "secondary": "#475569",
+      "muted": "#94A3B8",
+      "brand": "#4F46E5"
+    },
+    "border": {
+      "DEFAULT": "#E2E8F0",
+      "subtle": "#F1F5F9",
+      "focus": "#4F46E5"
+    },
+    "status": {
+      "success": "#10B981",
+      "error": "#EF4444",
+      "warning": "#F59E0B"
+    }
+  },
+  "visual_enhancers": {
+    "radius": {
+      "card": "rounded-2xl",
+      "button": "rounded-full",
+      "input": "rounded-xl"
+    },
+    "shadows": {
+      "card": "shadow-[0_2px_8px_rgba(0,0,0,0.04),0_12px_24px_rgba(0,0,0,0.04)]",
+      "hover": "shadow-[0_4px_12px_rgba(79,70,229,0.1),0_16px_32px_rgba(79,70,229,0.08)]",
+      "input_focus": "ring-4 ring-indigo-500/20"
+    },
+    "glass": "bg-white/80 backdrop-blur-xl border border-white/20 shadow-sm",
+    "gradients": {
+      "hero_text": "bg-clip-text text-transparent bg-gradient-to-r from-slate-900 to-slate-600",
+      "brand_text": "bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-violet-600"
+    }
+  },
+  "layout_strategy": {
+    "container": "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8",
+    "grid": "grid grid-cols-1 md:grid-cols-12 gap-6 md:gap-8",
+    "spacing": {
+      "section_y": "py-24 md:py-32",
+      "element_gap": "gap-4 md:gap-6"
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-indigo-600 text-white hover:bg-indigo-700 active:scale-95 transition-all duration-200 shadow-lg shadow-indigo-500/30 font-semibold px-8 py-3 rounded-full flex items-center justify-center gap-2",
+      "secondary": "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300 active:scale-95 transition-all duration-200 font-medium px-6 py-3 rounded-full flex items-center justify-center gap-2",
+      "ghost": "text-slate-500 hover:text-indigo-600 hover:bg-indigo-50/50 transition-colors font-medium px-4 py-2 rounded-lg"
+    },
+    "inputs": {
+      "base": "w-full bg-white border border-slate-200 text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all duration-200 rounded-xl px-5 py-4 text-lg outline-none",
+      "code_input": "font-mono text-center text-3xl tracking-[0.5em] uppercase"
+    },
+    "cards": {
+      "base": "bg-white rounded-2xl border border-slate-100 shadow-[0_2px_8px_rgba(0,0,0,0.04)] overflow-hidden transition-all duration-300 hover:shadow-[0_12px_32px_rgba(0,0,0,0.06)]"
+    }
+  },
+  "image_assets": {
+    "hero_bg": "https://images.unsplash.com/photo-1599163666602-ef737d996c16?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzZ8MHwxfHNlYXJjaHwzfHxhYnN0cmFjdCUyMG1pbmltYWwlMjB3aGl0ZSUyMGdlb21ldHJpYyUyMHNoYXBlcyUyMHNtb290aCUyMHdhdmVzJTIwbGlnaHQlMjBiYWNrZ3JvdW5kfGVufDB8fHx8MTc3MjkwNjUxNHww&ixlib=rb-4.1.0&q=85",
+    "social_share": "https://images.unsplash.com/photo-1537655949728-d4e1c7c7bf90"
+  },
+  "motion": {
+    "principles": {
+      "duration": "duration-300",
+      "ease": "ease-[cubic-bezier(0.2,0.8,0.2,1)]"
+    },
+    "variants": {
+      "fade_in_up": {
+        "initial": { "opacity": 0, "y": 20 },
+        "animate": { "opacity": 1, "y": 0 },
+        "transition": { "duration": 0.6, "ease": [0.22, 1, 0.36, 1] }
+      },
+      "scale_in": {
+        "initial": { "opacity": 0, "scale": 0.95 },
+        "animate": { "opacity": 1, "scale": 1 },
+        "transition": { "duration": 0.4 }
+      }
+    }
+  },
+  "instructions_to_main_agent": [
+    "Use 'framer-motion' for all entrance and interaction animations.",
+    "Implement 'sonner' for toast notifications (e.g., 'Copied to clipboard', 'Code generated').",
+    "Use 'lucide-react' for icons (Clipboard, Upload, Smartphone, QrCode, Copy, Check).",
+    "For the QRCode, use 'react-qr-code' or a similar lightweight library.",
+    "Ensure the 'Receiver' input auto-formats to uppercase.",
+    "The 'Generate Code' action should trigger a confetti effect or a satisfying 'success' animation.",
+    "Use the provided 'hero_bg' as a subtle background texture (opacity-5 or opacity-10) for the main section.",
+    "CRITICAL: Do not use gradients for the main background. Keep it clean slate/white.",
+    "CRITICAL: Ensure drag-and-drop zone feels tactile (border-dashed border-2 hover:border-indigo-500 hover:bg-indigo-50/50).",
+    "Use strict Z-index management to ensure toasts appear above everything."
+  ],
+  "universal_guidelines": [
+    "Do not use generic centered layouts for everything. Use asymmetry where possible.",
+    "Add 'data-testid' to all interactive elements.",
+    "Respect 'prefers-reduced-motion'.",
+    "Use Tailwind's 'group' and 'group-hover' for complex interaction states."
+  ]
+}

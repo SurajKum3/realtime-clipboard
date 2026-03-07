@@ -70,8 +70,10 @@ function App() {
   // Refs
   const wsRef = useRef(null);
   const pingIntervalRef = useRef(null);
+  const pollIntervalRef = useRef(null);
   const fileInputRef = useRef(null);
   const syncTimeoutRef = useRef(null);
+  const lastContentRef = useRef("");
   
   // Calculate line count
   const lineCount = content.split('\n').length;
@@ -81,6 +83,41 @@ function App() {
     return () => {
       disconnectWebSocket();
     };
+  }, []);
+
+  // HTTP Polling fallback for when WebSocket fails
+  const startPolling = useCallback((code) => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+    }
+    
+    pollIntervalRef.current = setInterval(async () => {
+      try {
+        const response = await axios.post(`${API}/room/join`, { room_code: code });
+        const serverContent = response.data.content || "";
+        const serverType = response.data.content_type || "text";
+        
+        // Only update if content changed and wasn't our own update
+        if (serverContent !== lastContentRef.current) {
+          lastContentRef.current = serverContent;
+          setContent(serverContent);
+          setContentType(serverType);
+          if (serverType === "image") {
+            setImagePreview(serverContent);
+          }
+          setClientCount(response.data.client_count || 1);
+        }
+      } catch (error) {
+        console.log('Polling error:', error.message);
+      }
+    }, 2000); // Poll every 2 seconds
+  }, []);
+
+  const stopPolling = useCallback(() => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
   }, []);
 
   // Connect to WebSocket
@@ -155,6 +192,10 @@ function App() {
     ws.onerror = (error) => {
       console.error('WebSocket error:', error);
       setIsConnecting(false);
+      // Start HTTP polling as fallback
+      startPolling(code);
+      setIsConnected(true); // Mark as connected via polling
+      toast.info("Using sync fallback mode", { duration: 2000 });
     };
 
     ws.onclose = () => {
@@ -164,8 +205,13 @@ function App() {
       if (pingIntervalRef.current) {
         clearInterval(pingIntervalRef.current);
       }
+      // Start polling if we're still in the room
+      if (view === "room" && roomCode) {
+        startPolling(roomCode);
+        setIsConnected(true);
+      }
     };
-  }, []);
+  }, [startPolling, view, roomCode]);
 
   // Disconnect WebSocket
   const disconnectWebSocket = useCallback(() => {
@@ -179,9 +225,10 @@ function App() {
     if (syncTimeoutRef.current) {
       clearTimeout(syncTimeoutRef.current);
     }
+    stopPolling();
     setIsConnected(false);
     setIsConnecting(false);
-  }, []);
+  }, [stopPolling]);
 
   // Send content update via WebSocket
   const sendContentUpdate = useCallback((newContent, newContentType = "text") => {
@@ -206,6 +253,7 @@ function App() {
     const newContent = e.target.value;
     setContent(newContent);
     setContentType("text");
+    lastContentRef.current = newContent; // Track our own changes
     
     // Debounce WebSocket updates
     if (syncTimeoutRef.current) {
@@ -227,6 +275,7 @@ function App() {
       setContent("");
       setContentType("text");
       setImagePreview("");
+      setClientCount(1); // Current user
       connectWebSocket(code);
       toast.success(`Room ${code} created!`);
     } catch (error) {
@@ -618,7 +667,12 @@ function App() {
             </button>
             <button 
               className={`mode-btn ${contentType === 'image' ? 'active' : ''}`}
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => {
+                setContentType('image');
+                if (!imagePreview) {
+                  fileInputRef.current?.click();
+                }
+              }}
               data-testid="image-mode-btn"
             >
               <Image size={18} />

@@ -21,30 +21,35 @@ Build a premium realtime clipboard web application called **OnBoard.in** - a fas
 9. Responsive for desktop, tablet, mobile
 
 ## What's Been Implemented (2026-03-07)
-- [x] FastAPI backend with WebSocket support (/ws/{code} endpoint)
-- [x] MongoDB for clipboard storage
-- [x] Text clipboard with share code generation
-- [x] Image clipboard with upload and share code
-- [x] QR code generation for both text and image codes
-- [x] Copy button functionality
-- [x] Receiver section to retrieve content by code
-- [x] Code expiration (5 minutes) with countdown timer
-- [x] Automatic cleanup of expired codes
-- [x] Premium UI with Manrope/Inter/JetBrains Mono fonts
-- [x] Framer Motion animations
-- [x] Sonner toast notifications
-- [x] Full responsive design
 
-### Realtime WebSocket Features (2026-03-07)
-- [x] WebSocket endpoint on backend (/ws/{code})
-- [x] Frontend WebSocket connection for senders (auto-connect on code generation)
-- [x] "Listen Realtime" button for receivers to wait for push updates
-- [x] Connection status indicator (Connecting.../Live)
-- [x] Ping/pong keepalive mechanism (30s interval)
-- [x] HTTP "Fetch Now" fallback for when WebSocket unavailable
-- [x] Stop listening button to disconnect WebSocket
+### Core Features (Complete Redesign)
+- [x] Room-based clipboard workflow (like live-clipboard.netlify.app)
+- [x] Home page with "Create Clipboard" and "Join Clipboard" cards
+- [x] 6-character room codes for easy sharing
+- [x] Room view with Text/Image mode toggle
+- [x] Large textarea for realtime clipboard sync
+- [x] Image upload with drag-drop and preview
+- [x] Room code display with copy button and QR code
+- [x] Connection status indicator (Connecting/Live)
+- [x] User count display
+- [x] Leave room functionality
+- [x] Line count and copy content button
+- [x] 24-hour room expiration
 
-**Note**: WebSocket connections are blocked by Kubernetes Ingress/Cloudflare proxy configuration. The HTTP fallback works perfectly. Infrastructure configuration needed for full realtime support.
+### Backend
+- [x] FastAPI with WebSocket support
+- [x] Room management (create, join, content sync)
+- [x] MongoDB for persistent room storage
+- [x] HTTP fallback endpoints for content sync
+- [x] Automatic room cleanup
+
+### Sync Mechanism
+- [x] WebSocket endpoint (/ws/{room_code}) for realtime sync
+- [x] HTTP polling fallback (2-second intervals) when WebSocket unavailable
+- [x] Content changes sync to all connected devices
+- [x] Image sharing via base64 encoding
+
+**Note**: WebSocket connections blocked by Kubernetes/Cloudflare proxy. HTTP polling fallback ensures clipboard still syncs across devices.
 
 ## Tech Stack
 - **Frontend**: React 19, Framer Motion, React QR Code, Sonner

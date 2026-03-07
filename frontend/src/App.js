@@ -13,13 +13,23 @@ import {
   Download,
   Clock,
   Zap,
-  X
+  X,
+  Wifi,
+  WifiOff,
+  Radio
 } from "lucide-react";
 import axios from "axios";
 import "@/App.css";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
+
+// Derive WebSocket URL from backend URL
+const getWebSocketUrl = (code) => {
+  const wsProtocol = BACKEND_URL.startsWith('https') ? 'wss' : 'ws';
+  const wsHost = BACKEND_URL.replace(/^https?:\/\//, '');
+  return `${wsProtocol}://${wsHost}/ws/${code}`;
+};
 
 // Animation variants
 const fadeInUp = {
@@ -32,6 +42,27 @@ const scaleIn = {
   initial: { opacity: 0, scale: 0.95 },
   animate: { opacity: 1, scale: 1 },
   exit: { opacity: 0, scale: 0.95 }
+};
+
+// WebSocket connection status component
+const ConnectionStatus = ({ isConnected, isConnecting }) => {
+  if (isConnecting) {
+    return (
+      <div className="connection-status connecting" data-testid="ws-connecting">
+        <Radio size={14} className="pulse-icon" />
+        <span>Connecting...</span>
+      </div>
+    );
+  }
+  if (isConnected) {
+    return (
+      <div className="connection-status connected" data-testid="ws-connected">
+        <Wifi size={14} />
+        <span>Live</span>
+      </div>
+    );
+  }
+  return null;
 };
 
 function App() {
@@ -57,12 +88,136 @@ function App() {
   const [receiveCode, setReceiveCode] = useState("");
   const [receivedContent, setReceivedContent] = useState(null);
   const [isReceiving, setIsReceiving] = useState(false);
+  
+  // WebSocket state
+  const [isWsConnected, setIsWsConnected] = useState(false);
+  const [isWsConnecting, setIsWsConnecting] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const wsRef = useRef(null);
+  const pingIntervalRef = useRef(null);
 
   const fileInputRef = useRef(null);
 
   // Calculate line count
   const lineCount = text.split('\n').length;
   const maxLines = 5000;
+
+  // Cleanup WebSocket on unmount
+  useEffect(() => {
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+      if (pingIntervalRef.current) {
+        clearInterval(pingIntervalRef.current);
+      }
+    };
+  }, []);
+
+  // Connect to WebSocket for receiving realtime updates
+  const connectWebSocket = useCallback((code) => {
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
+    if (pingIntervalRef.current) {
+      clearInterval(pingIntervalRef.current);
+    }
+
+    setIsWsConnecting(true);
+    setIsWsConnected(false);
+    
+    const wsUrl = getWebSocketUrl(code);
+    console.log('Connecting to WebSocket:', wsUrl);
+    
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      console.log('WebSocket connected');
+      setIsWsConnected(true);
+      setIsWsConnecting(false);
+      setIsListening(true);
+      
+      // Start ping interval to keep connection alive
+      pingIntervalRef.current = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'ping' }));
+        }
+      }, 30000);
+      
+      toast.success("Connected! Waiting for content...", {
+        icon: <Wifi size={16} />,
+        duration: 3000
+      });
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        console.log('WebSocket message received:', data);
+        
+        if (data.type === 'content_update') {
+          // Content received via realtime push
+          setReceivedContent({
+            code: code,
+            content: data.content,
+            content_type: data.content_type
+          });
+          toast.success("Content received in realtime!", {
+            icon: <Zap size={16} />,
+            duration: 4000
+          });
+        } else if (data.type === 'pong') {
+          // Ping response, connection is alive
+          console.log('Ping successful');
+        }
+      } catch (e) {
+        console.error('Error parsing WebSocket message:', e);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      setIsWsConnecting(false);
+    };
+
+    ws.onclose = () => {
+      console.log('WebSocket disconnected');
+      setIsWsConnected(false);
+      setIsWsConnecting(false);
+      setIsListening(false);
+      if (pingIntervalRef.current) {
+        clearInterval(pingIntervalRef.current);
+      }
+    };
+  }, []);
+
+  // Disconnect WebSocket
+  const disconnectWebSocket = useCallback(() => {
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    if (pingIntervalRef.current) {
+      clearInterval(pingIntervalRef.current);
+    }
+    setIsWsConnected(false);
+    setIsWsConnecting(false);
+    setIsListening(false);
+  }, []);
+
+  // Send content via WebSocket (for sender to push updates)
+  const sendViaWebSocket = useCallback((content, contentType) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'content',
+        content: content,
+        content_type: contentType
+      }));
+      return true;
+    }
+    return false;
+  }, []);
 
   // Timer effect for expiration countdown
   useEffect(() => {
@@ -110,9 +265,18 @@ function App() {
         content: text,
         content_type: "text"
       });
-      setTextCode(response.data.code);
+      const code = response.data.code;
+      setTextCode(code);
       setTextExpiry(response.data.expires_at);
       toast.success("Share code generated!");
+      
+      // Connect WebSocket and push content for realtime receivers
+      connectWebSocket(code);
+      // Give WebSocket time to connect, then push content
+      setTimeout(() => {
+        sendViaWebSocket(text, "text");
+      }, 1000);
+      
     } catch (error) {
       console.error("Error generating code:", error);
       toast.error("Failed to generate code. Please try again.");
@@ -196,9 +360,17 @@ function App() {
       const response = await axios.post(`${API}/clipboard/image`, formData, {
         headers: { "Content-Type": "multipart/form-data" }
       });
-      setImageCode(response.data.code);
+      const code = response.data.code;
+      setImageCode(code);
       setImageExpiry(response.data.expires_at);
       toast.success("Image share code generated!");
+      
+      // Connect WebSocket and push image for realtime receivers
+      connectWebSocket(code);
+      setTimeout(() => {
+        sendViaWebSocket(imagePreview, "image");
+      }, 1000);
+      
     } catch (error) {
       console.error("Error generating image code:", error);
       const message = error.response?.data?.detail || "Failed to generate code";
@@ -220,7 +392,22 @@ function App() {
     }
   };
 
-  // Receive clipboard content
+  // Start listening for realtime content
+  const handleStartListening = () => {
+    if (!receiveCode.trim() || receiveCode.length < 6) {
+      toast.error("Please enter a valid 6-character code");
+      return;
+    }
+    connectWebSocket(receiveCode.toUpperCase());
+  };
+
+  // Stop listening
+  const handleStopListening = () => {
+    disconnectWebSocket();
+    toast.info("Stopped listening");
+  };
+
+  // Receive clipboard content (manual fetch)
   const handleReceive = async () => {
     if (!receiveCode.trim()) {
       toast.error("Please enter a share code");
@@ -373,7 +560,10 @@ function App() {
                   exit="exit"
                   data-testid="text-code-card"
                 >
-                  <p className="code-label">Share this code</p>
+                  <div className="code-card-header">
+                    <p className="code-label">Share this code</p>
+                    {textCode && <ConnectionStatus isConnected={isWsConnected && isListening} isConnecting={isWsConnecting} />}
+                  </div>
                   <p className="code-value" data-testid="text-share-code">{textCode}</p>
                   
                   <div className="code-actions">
@@ -510,7 +700,10 @@ function App() {
                   exit="exit"
                   data-testid="image-code-card"
                 >
-                  <p className="code-label">Share this code</p>
+                  <div className="code-card-header">
+                    <p className="code-label">Share this code</p>
+                    {imageCode && <ConnectionStatus isConnected={isWsConnected && isListening} isConnecting={isWsConnecting} />}
+                  </div>
                   <p className="code-value" data-testid="image-share-code">{imageCode}</p>
                   
                   <div className="code-actions">
@@ -570,7 +763,7 @@ function App() {
           <div className="receiver-card">
             <h2 className="receiver-title">Receive Content</h2>
             <p className="receiver-subtitle">
-              Enter the share code to instantly receive text or image
+              Enter the share code to receive text or image instantly
             </p>
 
             <input
@@ -583,26 +776,63 @@ function App() {
               data-testid="receive-code-input"
             />
 
-            <motion.button
-              className="btn-primary"
-              onClick={handleReceive}
-              disabled={isReceiving || receiveCode.length < 6}
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              data-testid="receive-content-btn"
-            >
-              {isReceiving ? (
+            {/* Realtime listening toggle */}
+            <div className="receive-actions">
+              {!isListening ? (
                 <>
-                  <div className="spinner" />
-                  Receiving...
+                  <motion.button
+                    className="btn-realtime"
+                    onClick={handleStartListening}
+                    disabled={receiveCode.length < 6}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    data-testid="start-listening-btn"
+                  >
+                    <Radio size={18} />
+                    Listen Realtime
+                  </motion.button>
+                  
+                  <motion.button
+                    className="btn-primary"
+                    onClick={handleReceive}
+                    disabled={isReceiving || receiveCode.length < 6}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    data-testid="receive-content-btn"
+                  >
+                    {isReceiving ? (
+                      <>
+                        <div className="spinner" />
+                        Receiving...
+                      </>
+                    ) : (
+                      <>
+                        <Send size={18} />
+                        Fetch Now
+                      </>
+                    )}
+                  </motion.button>
                 </>
               ) : (
-                <>
-                  <Send size={18} />
-                  Receive Content
-                </>
+                <div className="listening-state">
+                  <div className="listening-indicator" data-testid="listening-indicator">
+                    <div className="listening-pulse" />
+                    <Wifi size={18} />
+                    <span>Listening for content on <strong>{receiveCode}</strong></span>
+                  </div>
+                  <motion.button
+                    className="btn-stop"
+                    onClick={handleStopListening}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    data-testid="stop-listening-btn"
+                  >
+                    <WifiOff size={16} />
+                    Stop
+                  </motion.button>
+                </div>
               )}
-            </motion.button>
+            </div>
 
             <AnimatePresence>
               {receivedContent && (

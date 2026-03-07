@@ -63,6 +63,7 @@ function App() {
   // Connection state
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false); // HTTP polling active
   const [clientCount, setClientCount] = useState(0);
   const [codeCopied, setCodeCopied] = useState(false);
   const [showQR, setShowQR] = useState(false);
@@ -91,6 +92,8 @@ function App() {
       clearInterval(pollIntervalRef.current);
     }
     
+    setIsSyncing(true);
+    
     pollIntervalRef.current = setInterval(async () => {
       try {
         const response = await axios.post(`${API}/room/join`, { room_code: code });
@@ -110,7 +113,7 @@ function App() {
       } catch (error) {
         console.log('Polling error:', error.message);
       }
-    }, 2000); // Poll every 2 seconds
+    }, 1000); // Poll every 1 second for faster sync
   }, []);
 
   const stopPolling = useCallback(() => {
@@ -118,6 +121,7 @@ function App() {
       clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = null;
     }
+    setIsSyncing(false);
   }, []);
 
   // Connect to WebSocket
@@ -276,6 +280,10 @@ function App() {
       setContentType("text");
       setImagePreview("");
       setClientCount(1); // Current user
+      // Start polling immediately for reliable sync
+      startPolling(code);
+      setIsConnected(true);
+      // Also try WebSocket (will fallback to polling if it fails)
       connectWebSocket(code);
       toast.success(`Room ${code} created!`);
     } catch (error) {
@@ -302,12 +310,17 @@ function App() {
       const code = response.data.room_code;
       setRoomCode(code);
       setContent(response.data.content || "");
+      lastContentRef.current = response.data.content || "";
       setContentType(response.data.content_type || "text");
       if (response.data.content_type === "image") {
         setImagePreview(response.data.content || "");
       }
       setClientCount(response.data.client_count || 1);
       setView("room");
+      // Start polling immediately for reliable sync
+      startPolling(code);
+      setIsConnected(true);
+      // Also try WebSocket
       connectWebSocket(code);
       toast.success(`Joined room ${code}!`);
     } catch (error) {
@@ -605,9 +618,9 @@ function App() {
             </div>
             
             <div className="connection-info">
-              <div className={`status-badge ${isConnected ? 'connected' : isConnecting ? 'connecting' : 'disconnected'}`}>
-                {isConnected ? <Wifi size={14} /> : isConnecting ? <Wifi size={14} className="pulse" /> : <WifiOff size={14} />}
-                {isConnected ? 'Live' : isConnecting ? 'Connecting...' : 'Disconnected'}
+              <div className={`status-badge ${(isConnected || isSyncing) ? 'connected' : isConnecting ? 'connecting' : 'disconnected'}`}>
+                {(isConnected || isSyncing) ? <Wifi size={14} /> : isConnecting ? <Wifi size={14} className="pulse" /> : <WifiOff size={14} />}
+                {(isConnected || isSyncing) ? 'Live' : isConnecting ? 'Connecting...' : 'Offline'}
               </div>
               <div className="client-count" data-testid="client-count">
                 <Users size={14} />
@@ -748,8 +761,8 @@ function App() {
 
           {/* Sync Indicator */}
           <div className="sync-indicator" data-testid="sync-indicator">
-            <div className={`sync-dot ${isConnected ? 'active' : ''}`} />
-            <span>{isConnected ? 'Changes sync instantly across all devices' : 'Reconnecting...'}</span>
+            <div className={`sync-dot ${(isConnected || isSyncing) ? 'active' : ''}`} />
+            <span>{(isConnected || isSyncing) ? 'Changes sync across all devices' : 'Connecting...'}</span>
           </div>
         </motion.div>
       </div>

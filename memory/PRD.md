@@ -45,11 +45,13 @@ Build a premium realtime clipboard web application called **OnBoard.in** - a fas
 
 ### Sync Mechanism
 - [x] WebSocket endpoint (/ws/{room_code}) for realtime sync
-- [x] HTTP polling fallback (2-second intervals) when WebSocket unavailable
+- [x] HTTP polling fallback (1-second intervals) - always active for reliability
 - [x] Content changes sync to all connected devices
 - [x] Image sharing via base64 encoding
+- [x] "Live" status indicator shows when sync is active
+- [x] Sync status shows at bottom: "Changes sync across all devices"
 
-**Note**: WebSocket connections blocked by Kubernetes/Cloudflare proxy. HTTP polling fallback ensures clipboard still syncs across devices.
+**Infrastructure Note**: WebSocket connections blocked by Kubernetes/Cloudflare proxy. HTTP polling provides reliable 1-second sync intervals. For true instant sync (<100ms), contact Emergent support to configure WebSocket proxy in Kubernetes Ingress.
 
 ## Tech Stack
 - **Frontend**: React 19, Framer Motion, React QR Code, Sonner

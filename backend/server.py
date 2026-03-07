@@ -6,10 +6,11 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 import uuid
 import base64
 import asyncio
+import json
 from datetime import datetime, timezone, timedelta
 
 ROOT_DIR = Path(__file__).parent
@@ -33,59 +34,112 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# WebSocket Connection Manager
-class ConnectionManager:
+# Room Manager for WebSocket connections
+class RoomManager:
     def __init__(self):
-        self.active_connections: Dict[str, WebSocket] = {}
+        # room_code -> list of WebSocket connections
+        self.rooms: Dict[str, List[WebSocket]] = {}
+        # room_code -> current content
+        self.room_content: Dict[str, dict] = {}
     
-    async def connect(self, websocket: WebSocket, code: str):
+    async def connect(self, websocket: WebSocket, room_code: str):
         await websocket.accept()
-        self.active_connections[code] = websocket
-        logger.info(f"WebSocket connected for code: {code}")
-    
-    def disconnect(self, code: str):
-        if code in self.active_connections:
-            del self.active_connections[code]
-            logger.info(f"WebSocket disconnected for code: {code}")
-    
-    async def send_to_code(self, code: str, message: dict):
-        if code in self.active_connections:
+        if room_code not in self.rooms:
+            self.rooms[room_code] = []
+        self.rooms[room_code].append(websocket)
+        logger.info(f"Client connected to room {room_code}. Total clients: {len(self.rooms[room_code])}")
+        
+        # Send current content to newly connected client
+        if room_code in self.room_content:
             try:
-                await self.active_connections[code].send_json(message)
-                logger.info(f"Message sent to code: {code}")
-                return True
+                await websocket.send_json({
+                    "type": "sync",
+                    "content": self.room_content[room_code].get("content", ""),
+                    "content_type": self.room_content[room_code].get("content_type", "text"),
+                    "client_count": len(self.rooms[room_code])
+                })
             except Exception as e:
-                logger.error(f"Error sending to {code}: {e}")
-                return False
-        return False
+                logger.error(f"Error sending initial sync: {e}")
+        
+        # Notify all clients about the new connection count
+        await self.broadcast_client_count(room_code)
+    
+    def disconnect(self, websocket: WebSocket, room_code: str):
+        if room_code in self.rooms:
+            if websocket in self.rooms[room_code]:
+                self.rooms[room_code].remove(websocket)
+            if len(self.rooms[room_code]) == 0:
+                del self.rooms[room_code]
+                # Keep content for a while in case someone rejoins
+            else:
+                # Notify remaining clients
+                try:
+                    asyncio.create_task(self.broadcast_client_count(room_code))
+                except Exception:
+                    pass
+        logger.info(f"Client disconnected from room {room_code}")
+    
+    async def broadcast_client_count(self, room_code: str):
+        if room_code in self.rooms:
+            count = len(self.rooms[room_code])
+            for ws in self.rooms[room_code]:
+                try:
+                    await ws.send_json({"type": "client_count", "count": count})
+                except Exception:
+                    pass
+    
+    async def broadcast(self, room_code: str, message: dict, exclude: WebSocket = None):
+        if room_code in self.rooms:
+            for ws in self.rooms[room_code]:
+                if ws != exclude:
+                    try:
+                        await ws.send_json(message)
+                    except Exception as e:
+                        logger.error(f"Error broadcasting to client: {e}")
+    
+    def update_content(self, room_code: str, content: str, content_type: str = "text"):
+        self.room_content[room_code] = {
+            "content": content,
+            "content_type": content_type,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }
+    
+    def get_content(self, room_code: str) -> Optional[dict]:
+        return self.room_content.get(room_code)
+    
+    def get_client_count(self, room_code: str) -> int:
+        return len(self.rooms.get(room_code, []))
+    
+    def room_exists(self, room_code: str) -> bool:
+        return room_code in self.rooms or room_code in self.room_content
 
-manager = ConnectionManager()
+room_manager = RoomManager()
 
 # Pydantic Models
-class ClipboardCreate(BaseModel):
-    content: str
-    content_type: str = "text"  # "text" or "image"
+class RoomCreate(BaseModel):
+    room_code: Optional[str] = None
 
-class ClipboardResponse(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    code: str
-    content_type: str
+class RoomResponse(BaseModel):
+    room_code: str
     created_at: str
     expires_at: str
 
-class ReceiveRequest(BaseModel):
-    code: str
+class RoomJoin(BaseModel):
+    room_code: str
 
-class ClipboardContent(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    code: str
+class RoomStatus(BaseModel):
+    room_code: str
+    exists: bool
+    client_count: int
+    has_content: bool
+
+class ContentUpdate(BaseModel):
+    room_code: str
     content: str
-    content_type: str
-    created_at: str
-    expires_at: str
+    content_type: str = "text"
 
-# Generate unique 6-character code
-def generate_code() -> str:
+# Generate unique 6-character room code
+def generate_room_code() -> str:
     return uuid.uuid4().hex[:6].upper()
 
 # API Routes
@@ -97,34 +151,140 @@ async def root():
 async def health_check():
     return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
 
-@api_router.post("/clipboard", response_model=ClipboardResponse)
-async def create_clipboard(data: ClipboardCreate):
-    """Create a new clipboard entry with a share code"""
-    code = generate_code()
+@api_router.post("/room/create", response_model=RoomResponse)
+async def create_room(data: RoomCreate = None):
+    """Create a new clipboard room"""
+    room_code = generate_room_code()
     now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(minutes=5)
+    expires_at = now + timedelta(hours=24)  # Rooms last 24 hours
     
-    clipboard_doc = {
-        "code": code,
-        "content": data.content,
-        "content_type": data.content_type,
+    # Initialize room in database
+    room_doc = {
+        "room_code": room_code,
+        "content": "",
+        "content_type": "text",
         "created_at": now.isoformat(),
-        "expires_at": expires_at.isoformat()
+        "expires_at": expires_at.isoformat(),
+        "updated_at": now.isoformat()
     }
     
-    await db.clipboards.insert_one(clipboard_doc)
-    logger.info(f"Clipboard created with code: {code}")
+    await db.rooms.insert_one(room_doc)
     
-    return ClipboardResponse(
-        code=code,
-        content_type=data.content_type,
+    # Initialize in memory
+    room_manager.room_content[room_code] = {
+        "content": "",
+        "content_type": "text",
+        "updated_at": now.isoformat()
+    }
+    
+    logger.info(f"Room created: {room_code}")
+    
+    return RoomResponse(
+        room_code=room_code,
         created_at=now.isoformat(),
         expires_at=expires_at.isoformat()
     )
 
-@api_router.post("/clipboard/image", response_model=ClipboardResponse)
-async def create_image_clipboard(file: UploadFile = File(...)):
-    """Upload an image and create clipboard entry"""
+@api_router.post("/room/join")
+async def join_room(data: RoomJoin):
+    """Check if room exists and get current content"""
+    room_code = data.room_code.upper().strip()
+    
+    # Check in memory first
+    if room_manager.room_exists(room_code):
+        content = room_manager.get_content(room_code)
+        return {
+            "success": True,
+            "room_code": room_code,
+            "content": content.get("content", "") if content else "",
+            "content_type": content.get("content_type", "text") if content else "text",
+            "client_count": room_manager.get_client_count(room_code)
+        }
+    
+    # Check in database
+    room = await db.rooms.find_one({"room_code": room_code}, {"_id": 0})
+    
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    
+    # Check expiration
+    expires_at = datetime.fromisoformat(room["expires_at"])
+    if datetime.now(timezone.utc) > expires_at:
+        await db.rooms.delete_one({"room_code": room_code})
+        raise HTTPException(status_code=404, detail="Room has expired")
+    
+    # Load into memory
+    room_manager.room_content[room_code] = {
+        "content": room.get("content", ""),
+        "content_type": room.get("content_type", "text"),
+        "updated_at": room.get("updated_at", datetime.now(timezone.utc).isoformat())
+    }
+    
+    return {
+        "success": True,
+        "room_code": room_code,
+        "content": room.get("content", ""),
+        "content_type": room.get("content_type", "text"),
+        "client_count": room_manager.get_client_count(room_code)
+    }
+
+@api_router.get("/room/{room_code}/status")
+async def room_status(room_code: str):
+    """Get room status"""
+    room_code = room_code.upper().strip()
+    exists = room_manager.room_exists(room_code)
+    
+    if not exists:
+        room = await db.rooms.find_one({"room_code": room_code}, {"_id": 0})
+        exists = room is not None
+    
+    return RoomStatus(
+        room_code=room_code,
+        exists=exists,
+        client_count=room_manager.get_client_count(room_code),
+        has_content=room_code in room_manager.room_content and bool(room_manager.room_content[room_code].get("content"))
+    )
+
+@api_router.post("/room/content")
+async def update_content(data: ContentUpdate):
+    """Update room content via HTTP (fallback)"""
+    room_code = data.room_code.upper().strip()
+    
+    if not room_manager.room_exists(room_code):
+        # Check database
+        room = await db.rooms.find_one({"room_code": room_code})
+        if not room:
+            raise HTTPException(status_code=404, detail="Room not found")
+    
+    # Update content
+    room_manager.update_content(room_code, data.content, data.content_type)
+    
+    # Update in database
+    await db.rooms.update_one(
+        {"room_code": room_code},
+        {
+            "$set": {
+                "content": data.content,
+                "content_type": data.content_type,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }
+        }
+    )
+    
+    # Broadcast to all connected clients
+    await room_manager.broadcast(room_code, {
+        "type": "content_update",
+        "content": data.content,
+        "content_type": data.content_type
+    })
+    
+    return {"success": True}
+
+@api_router.post("/room/image")
+async def upload_image(room_code: str, file: UploadFile = File(...)):
+    """Upload image to room"""
+    room_code = room_code.upper().strip()
+    
     # Read file content
     content = await file.read()
     
@@ -135,124 +295,107 @@ async def create_image_clipboard(file: UploadFile = File(...)):
     # Check file type
     allowed_types = ["image/jpeg", "image/png", "image/gif", "image/webp"]
     if file.content_type not in allowed_types:
-        raise HTTPException(status_code=400, detail="Invalid file type. Allowed: JPEG, PNG, GIF, WebP")
+        raise HTTPException(status_code=400, detail="Invalid file type")
     
     # Convert to base64
     base64_content = base64.b64encode(content).decode('utf-8')
     data_url = f"data:{file.content_type};base64,{base64_content}"
     
-    code = generate_code()
-    now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(minutes=5)
+    # Update content
+    room_manager.update_content(room_code, data_url, "image")
     
-    clipboard_doc = {
-        "code": code,
+    # Update in database
+    await db.rooms.update_one(
+        {"room_code": room_code},
+        {
+            "$set": {
+                "content": data_url,
+                "content_type": "image",
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }
+        }
+    )
+    
+    # Broadcast to all connected clients
+    await room_manager.broadcast(room_code, {
+        "type": "content_update",
         "content": data_url,
-        "content_type": "image",
-        "created_at": now.isoformat(),
-        "expires_at": expires_at.isoformat()
-    }
+        "content_type": "image"
+    })
     
-    await db.clipboards.insert_one(clipboard_doc)
-    logger.info(f"Image clipboard created with code: {code}")
-    
-    return ClipboardResponse(
-        code=code,
-        content_type="image",
-        created_at=now.isoformat(),
-        expires_at=expires_at.isoformat()
-    )
+    return {"success": True}
 
-@api_router.post("/clipboard/receive", response_model=ClipboardContent)
-async def receive_clipboard(data: ReceiveRequest):
-    """Receive clipboard content by code"""
-    code = data.code.upper().strip()
+# WebSocket endpoint for realtime sync
+@app.websocket("/ws/{room_code}")
+async def websocket_endpoint(websocket: WebSocket, room_code: str):
+    room_code = room_code.upper().strip()
+    await room_manager.connect(websocket, room_code)
     
-    clipboard = await db.clipboards.find_one(
-        {"code": code},
-        {"_id": 0}
-    )
-    
-    if not clipboard:
-        raise HTTPException(status_code=404, detail="Code not found or expired")
-    
-    # Check expiration
-    expires_at = datetime.fromisoformat(clipboard["expires_at"])
-    if datetime.now(timezone.utc) > expires_at:
-        # Delete expired entry
-        await db.clipboards.delete_one({"code": code})
-        raise HTTPException(status_code=404, detail="Code has expired")
-    
-    return ClipboardContent(**clipboard)
-
-@api_router.get("/clipboard/{code}")
-async def get_clipboard(code: str):
-    """Get clipboard by code (alternative to POST)"""
-    code = code.upper().strip()
-    
-    clipboard = await db.clipboards.find_one(
-        {"code": code},
-        {"_id": 0}
-    )
-    
-    if not clipboard:
-        raise HTTPException(status_code=404, detail="Code not found or expired")
-    
-    # Check expiration
-    expires_at = datetime.fromisoformat(clipboard["expires_at"])
-    if datetime.now(timezone.utc) > expires_at:
-        await db.clipboards.delete_one({"code": code})
-        raise HTTPException(status_code=404, detail="Code has expired")
-    
-    return clipboard
-
-# WebSocket endpoint for realtime updates
-@app.websocket("/ws/{code}")
-async def websocket_endpoint(websocket: WebSocket, code: str):
-    code = code.upper().strip()
-    await manager.connect(websocket, code)
     try:
         while True:
-            # Keep connection alive and listen for messages
             data = await websocket.receive_json()
             
             if data.get("type") == "ping":
                 await websocket.send_json({"type": "pong"})
             
-            elif data.get("type") == "content":
-                # Sender is pushing content - notify receiver
+            elif data.get("type") == "content_update":
                 content = data.get("content", "")
                 content_type = data.get("content_type", "text")
                 
-                # Store in database
-                now = datetime.now(timezone.utc)
-                expires_at = now + timedelta(minutes=5)
+                # Update in memory
+                room_manager.update_content(room_code, content, content_type)
                 
-                await db.clipboards.update_one(
-                    {"code": code},
+                # Broadcast to all other clients in the room
+                await room_manager.broadcast(room_code, {
+                    "type": "content_update",
+                    "content": content,
+                    "content_type": content_type
+                }, exclude=websocket)
+                
+                # Persist to database (async, don't wait)
+                asyncio.create_task(db.rooms.update_one(
+                    {"room_code": room_code},
                     {
                         "$set": {
                             "content": content,
                             "content_type": content_type,
-                            "created_at": now.isoformat(),
-                            "expires_at": expires_at.isoformat()
+                            "updated_at": datetime.now(timezone.utc).isoformat()
                         }
                     },
                     upsert=True
-                )
+                ))
+            
+            elif data.get("type") == "image_update":
+                content = data.get("content", "")
                 
-                # Broadcast to any listeners on this code
-                await websocket.send_json({
+                # Update in memory
+                room_manager.update_content(room_code, content, "image")
+                
+                # Broadcast to all other clients
+                await room_manager.broadcast(room_code, {
                     "type": "content_update",
                     "content": content,
-                    "content_type": content_type
-                })
+                    "content_type": "image"
+                }, exclude=websocket)
+                
+                # Persist to database
+                asyncio.create_task(db.rooms.update_one(
+                    {"room_code": room_code},
+                    {
+                        "$set": {
+                            "content": content,
+                            "content_type": "image",
+                            "updated_at": datetime.now(timezone.utc).isoformat()
+                        }
+                    },
+                    upsert=True
+                ))
                 
     except WebSocketDisconnect:
-        manager.disconnect(code)
+        room_manager.disconnect(websocket, room_code)
     except Exception as e:
-        logger.error(f"WebSocket error for {code}: {e}")
-        manager.disconnect(code)
+        logger.error(f"WebSocket error for room {room_code}: {e}")
+        room_manager.disconnect(websocket, room_code)
 
 # Include the router in the main app
 app.include_router(api_router)
@@ -266,25 +409,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Cleanup expired clipboards periodically
+# Cleanup expired rooms periodically
 async def cleanup_expired():
     while True:
         try:
             now = datetime.now(timezone.utc).isoformat()
-            result = await db.clipboards.delete_many({
+            result = await db.rooms.delete_many({
                 "expires_at": {"$lt": now}
             })
             if result.deleted_count > 0:
-                logger.info(f"Cleaned up {result.deleted_count} expired clipboards")
+                logger.info(f"Cleaned up {result.deleted_count} expired rooms")
         except Exception as e:
             logger.error(f"Cleanup error: {e}")
-        await asyncio.sleep(60)  # Run every minute
+        await asyncio.sleep(300)  # Run every 5 minutes
 
 @app.on_event("startup")
 async def startup_event():
-    # Create index for expiration
-    await db.clipboards.create_index("expires_at")
-    await db.clipboards.create_index("code", unique=True)
+    # Create indexes
+    await db.rooms.create_index("expires_at")
+    await db.rooms.create_index("room_code", unique=True)
     # Start cleanup task
     asyncio.create_task(cleanup_expired())
 

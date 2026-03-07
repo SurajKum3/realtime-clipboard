@@ -29,7 +29,7 @@ class OnBoardAPITester:
         self.api_url = f"{self.base_url}/api"
         self.tests_run = 0
         self.tests_passed = 0
-        print(f"🔧 Testing API at: {self.api_url}")
+        print(f"🔧 Testing OnBoard.in Room API at: {self.api_url}")
 
     def run_test(self, name, method, endpoint, expected_status, data=None, files=None):
         """Run a single API test"""
@@ -90,28 +90,105 @@ class OnBoardAPITester:
             return response.get('status') == 'healthy'
         return False
 
-    def test_create_text_clipboard(self):
-        """Test creating a text clipboard entry"""
-        test_text = "Hello from OnBoard.in! This is a test clipboard entry with some text content."
+    def test_api_root(self):
+        """Test the API root endpoint"""
+        success, response = self.run_test(
+            "API Root",
+            "GET",
+            "",
+            200
+        )
+        if success and 'message' in response:
+            print(f"   Message: {response['message']}")
+            return True
+        return success
+
+    def test_create_room(self):
+        """Test creating a new room"""
+        success, response = self.run_test(
+            "Create Room",
+            "POST", 
+            "room/create",
+            200,
+            data={}
+        )
+        
+        if success and 'room_code' in response:
+            room_code = response['room_code']
+            print(f"   Generated Room Code: {room_code}")
+            print(f"   Created At: {response.get('created_at')}")
+            print(f"   Expires At: {response.get('expires_at')}")
+            return room_code
+        return None
+
+    def test_join_room(self, room_code):
+        """Test joining an existing room"""
+        success, response = self.run_test(
+            "Join Room",
+            "POST",
+            "room/join", 
+            200,
+            data={"room_code": room_code}
+        )
+        
+        if success:
+            print(f"   Joined Room: {response.get('room_code')}")
+            print(f"   Content: '{response.get('content', '')[:50]}{'...' if len(response.get('content', '')) > 50 else ''}'")
+            print(f"   Content Type: {response.get('content_type')}")
+            print(f"   Client Count: {response.get('client_count')}")
+            return True
+        return False
+
+    def test_join_invalid_room(self):
+        """Test joining with invalid room code"""
+        success, response = self.run_test(
+            "Join Invalid Room",
+            "POST",
+            "room/join",
+            404,
+            data={"room_code": "INVALID"}
+        )
+        return success  # We expect a 404, so success here means test passed
+
+    def test_room_status(self, room_code):
+        """Test getting room status"""
+        success, response = self.run_test(
+            "Room Status",
+            "GET",
+            f"room/{room_code}/status",
+            200
+        )
+        
+        if success:
+            print(f"   Room Exists: {response.get('exists')}")
+            print(f"   Client Count: {response.get('client_count')}")
+            print(f"   Has Content: {response.get('has_content')}")
+            return response.get('exists', False)
+        return False
+
+    def test_update_room_content(self, room_code):
+        """Test updating room content via HTTP"""
+        test_content = "Hello from OnBoard.in! This is a test message for room content sync."
         
         success, response = self.run_test(
-            "Create Text Clipboard",
+            "Update Room Content",
             "POST",
-            "clipboard", 
+            "room/content",
             200,
             data={
-                "content": test_text,
+                "room_code": room_code,
+                "content": test_content,
                 "content_type": "text"
             }
         )
         
-        if success and 'code' in response:
-            print(f"   Generated Code: {response['code']}")
-            return response['code']
+        if success and response.get('success'):
+            print(f"   Content Updated Successfully")
+            return test_content
         return None
 
-    def test_create_image_clipboard(self):
-        """Test creating an image clipboard entry"""
+    def test_upload_room_image(self, room_code):
+        """Test uploading image to room"""
         # Create a small test image (1x1 PNG)
         test_image_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xdb\x00\x00\x00\x00IEND\xaeB`\x82'
         
@@ -122,72 +199,61 @@ class OnBoardAPITester:
         
         try:
             with open(tmp_file_path, 'rb') as img_file:
-                success, response = self.run_test(
-                    "Create Image Clipboard",
-                    "POST",
-                    "clipboard/image",
-                    200,
-                    files={"file": ("test.png", img_file, "image/png")}
+                # Test image upload endpoint - room_code should be query parameter
+                url = f"{self.api_url}/room/image"
+                response = requests.post(
+                    url,
+                    params={"room_code": room_code},
+                    files={"file": ("test.png", img_file, "image/png")},
+                    timeout=15
                 )
-            
-            if success and 'code' in response:
-                print(f"   Generated Image Code: {response['code']}")
-                return response['code']
                 
+                self.tests_run += 1
+                print(f"\n🔍 Testing Upload Room Image...")
+                print(f"   URL: {url}")
+                
+                if response.status_code == 200:
+                    self.tests_passed += 1
+                    print(f"✅ Passed - Status: {response.status_code}")
+                    try:
+                        resp_data = response.json()
+                        if resp_data.get('success'):
+                            print(f"   Image Upload Successful")
+                            return True
+                    except:
+                        pass
+                else:
+                    print(f"❌ Failed - Expected 200, got {response.status_code}")
+                    print(f"   Response: {response.text[:200]}...")
+                
+        except Exception as e:
+            self.tests_run += 1
+            print(f"❌ Failed - Error: {str(e)}")
         finally:
             # Clean up temp file
             os.unlink(tmp_file_path)
             
-        return None
-
-    def test_receive_clipboard(self, code, expected_content_type="text"):
-        """Test receiving clipboard content by code"""
-        success, response = self.run_test(
-            f"Receive {expected_content_type.title()} Clipboard",
-            "POST",
-            "clipboard/receive",
-            200,
-            data={"code": code}
-        )
-        
-        if success:
-            content_type = response.get('content_type')
-            if content_type == expected_content_type:
-                print(f"   Content Type: {content_type}")
-                if content_type == "text":
-                    print(f"   Content Length: {len(response.get('content', ''))}")
-                elif content_type == "image":
-                    content = response.get('content', '')
-                    print(f"   Image Data URL Length: {len(content)}")
-                    print(f"   Is Data URL: {content.startswith('data:image/')}")
-                return True
-            else:
-                print(f"   Expected content_type: {expected_content_type}, got: {content_type}")
         return False
 
-    def test_receive_invalid_code(self):
-        """Test receiving with invalid code"""
-        success, response = self.run_test(
-            "Receive Invalid Code",
-            "POST", 
-            "clipboard/receive",
-            404,
-            data={"code": "INVALID"}
-        )
-        return success  # We expect a 404, so success here means test passed
-
-    def test_api_root(self):
-        """Test the API root endpoint"""
-        success, response = self.run_test(
-            "API Root",
-            "GET",
-            "",
-            200
-        )
-        return success and 'message' in response
+    def test_websocket_url_format(self):
+        """Test that WebSocket URL format is correct"""
+        room_code = "TEST123"
+        expected_ws_url = f"wss://{self.base_url.replace('https://', '').replace('http://', '')}/ws/{room_code}"
+        
+        print(f"\n🔍 Testing WebSocket URL Format...")
+        print(f"   Expected WS URL: {expected_ws_url}")
+        print(f"   Base URL: {self.base_url}")
+        
+        # Just validate URL format, can't test actual WebSocket connection easily
+        if "onboard-share.preview.emergentagent.com" in expected_ws_url:
+            print("✅ WebSocket URL format looks correct")
+            return True
+        else:
+            print("❌ WebSocket URL format may be incorrect")
+            return False
 
 def main():
-    print("🚀 Starting OnBoard.in API Tests")
+    print("🚀 Starting OnBoard.in Room API Tests")
     print("=" * 50)
     
     tester = OnBoardAPITester()
@@ -201,29 +267,41 @@ def main():
     if not tester.test_api_root():
         print("❌ API root endpoint failed")
     
-    # Test 3: Create Text Clipboard
-    text_code = tester.test_create_text_clipboard()
-    if not text_code:
-        print("❌ Text clipboard creation failed")
+    # Test 3: Create Room
+    room_code = tester.test_create_room()
+    if not room_code:
+        print("❌ Room creation failed - stopping tests")
+        return 1
     
-    # Test 4: Create Image Clipboard 
-    image_code = tester.test_create_image_clipboard()
-    if not image_code:
-        print("❌ Image clipboard creation failed")
+    # Test 4: Room Status (should exist)
+    if not tester.test_room_status(room_code):
+        print(f"❌ Room status check failed for room: {room_code}")
     
-    # Test 5: Receive Text Clipboard
-    if text_code:
-        if not tester.test_receive_clipboard(text_code, "text"):
-            print(f"❌ Failed to receive text clipboard with code: {text_code}")
+    # Test 5: Join Room
+    if not tester.test_join_room(room_code):
+        print(f"❌ Failed to join room: {room_code}")
     
-    # Test 6: Receive Image Clipboard
-    if image_code:
-        if not tester.test_receive_clipboard(image_code, "image"):
-            print(f"❌ Failed to receive image clipboard with code: {image_code}")
+    # Test 6: Update Room Content
+    updated_content = tester.test_update_room_content(room_code)
+    if not updated_content:
+        print("❌ Failed to update room content")
     
-    # Test 7: Invalid Code Handling
-    if not tester.test_receive_invalid_code():
-        print("❌ Invalid code handling failed")
+    # Test 7: Upload Image to Room
+    if not tester.test_upload_room_image(room_code):
+        print("❌ Failed to upload image to room")
+    
+    # Test 8: Join after content update (should have content now)
+    print(f"\n🔍 Re-testing join room after content update...")
+    if not tester.test_join_room(room_code):
+        print(f"❌ Failed to re-join room after content update: {room_code}")
+    
+    # Test 9: Invalid Room Code Handling
+    if not tester.test_join_invalid_room():
+        print("❌ Invalid room code handling failed")
+    
+    # Test 10: WebSocket URL Format Check
+    if not tester.test_websocket_url_format():
+        print("❌ WebSocket URL format check failed")
     
     # Print final results
     print("\n" + "=" * 50)

@@ -21,7 +21,7 @@ Build a premium realtime clipboard web application called **OnBoard.in** - a fas
 9. Responsive for desktop, tablet, mobile
 
 ## What's Been Implemented (2026-03-07)
-- [x] FastAPI backend with WebSocket support
+- [x] FastAPI backend with WebSocket support (/ws/{code} endpoint)
 - [x] MongoDB for clipboard storage
 - [x] Text clipboard with share code generation
 - [x] Image clipboard with upload and share code
@@ -34,6 +34,17 @@ Build a premium realtime clipboard web application called **OnBoard.in** - a fas
 - [x] Framer Motion animations
 - [x] Sonner toast notifications
 - [x] Full responsive design
+
+### Realtime WebSocket Features (2026-03-07)
+- [x] WebSocket endpoint on backend (/ws/{code})
+- [x] Frontend WebSocket connection for senders (auto-connect on code generation)
+- [x] "Listen Realtime" button for receivers to wait for push updates
+- [x] Connection status indicator (Connecting.../Live)
+- [x] Ping/pong keepalive mechanism (30s interval)
+- [x] HTTP "Fetch Now" fallback for when WebSocket unavailable
+- [x] Stop listening button to disconnect WebSocket
+
+**Note**: WebSocket connections are blocked by Kubernetes Ingress/Cloudflare proxy configuration. The HTTP fallback works perfectly. Infrastructure configuration needed for full realtime support.
 
 ## Tech Stack
 - **Frontend**: React 19, Framer Motion, React QR Code, Sonner

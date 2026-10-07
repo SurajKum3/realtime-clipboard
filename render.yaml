@@ -1,0 +1,29 @@
+# Render blueprint for the backend (the frontend is deployed on Vercel, see frontend/vercel.json).
+# In the Render dashboard: New > Blueprint > pick this repo. It asks for the values marked `sync: false`.
+services:
+  - type: web
+    name: onboard-clipboard-api
+    runtime: python
+    rootDir: backend
+    # The free plan sleeps after 15 minutes without traffic and takes up to a minute to wake,
+    # which drops everyone's live connection. Use `starter` or higher for real users.
+    plan: free
+    # Pick the region closest to your users, and put the MongoDB cluster in the same area.
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    # One process only (no --workers): live rooms are kept in memory, so clients on different
+    # processes would not see each other's changes.
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT --proxy-headers --timeout-graceful-shutdown 20
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.11
+      - key: DB_NAME
+        value: onboard
+      # MongoDB connection string, e.g. mongodb+srv://user:password@cluster.xxxxx.mongodb.net
+      - key: MONGO_URL
+        sync: false
+      # The frontend's origin(s), comma separated, e.g. https://your-app.vercel.app
+      - key: CORS_ORIGINS
+        sync: false

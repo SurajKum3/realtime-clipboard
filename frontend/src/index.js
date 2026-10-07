@@ -9,3 +9,10 @@ root.render(
     <App />
   </React.StrictMode>,
 );
+
+// Caches the app's own files so repeat visits start instantly (see public/service-worker.js)
+if (process.env.NODE_ENV === "production" && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register(`${process.env.PUBLIC_URL}/service-worker.js`).catch(() => {});
+  });
+}

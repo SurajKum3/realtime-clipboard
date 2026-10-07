@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Manrope:wght@400;600;700;800&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -25,6 +23,11 @@
     --input: 214 32% 91%;
     --ring: 239 84% 67%;
     --radius: 0.75rem;
+
+    /* Web fonts load without blocking rendering (see public/index.html), system fonts show until then */
+    --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --font-heading: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
 }
 
 * {
@@ -35,15 +38,19 @@
 
 html {
     scroll-behavior: smooth;
+    /* Stop phones from inflating text sizes in landscape */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
 }
 
 body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: var(--font-body);
     background-color: #F8FAFC;
     color: #0F172A;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     min-height: 100vh;
+    min-height: 100dvh;
 }
 
 /* Custom scrollbar */
@@ -80,11 +87,11 @@ body {
 
 /* Typography */
 .font-heading {
-    font-family: 'Manrope', sans-serif;
+    font-family: var(--font-heading);
 }
 
 .font-mono {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-mono);
 }
 
 /* Animations */
@@ -170,7 +177,6 @@ body {
     transition: all 0.2s ease;
 }
 
-.drop-zone:hover,
 .drop-zone.drag-over {
     border-color: #4F46E5;
     background-color: rgba(79, 70, 229, 0.05);
@@ -185,7 +191,7 @@ body {
 
 /* Code display */
 .code-display {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-mono);
     letter-spacing: 0.3em;
     font-weight: 600;
 }

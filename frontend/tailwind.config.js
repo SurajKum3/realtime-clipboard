@@ -1,8 +1,13 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
     darkMode: ["class"],
+    // src/components/ui (shadcn) is left out on purpose: nothing imports it yet, and scanning it
+    // adds ~40KB of unused classes to the render-blocking stylesheet. When you start using one
+    // of those components, add its file here or its Tailwind classes won't be generated.
     content: [
-    "./src/**/*.{js,jsx,ts,tsx}",
+    "./src/*.{js,jsx,ts,tsx}",
+    "./src/hooks/**/*.{js,jsx,ts,tsx}",
+    "./src/lib/**/*.{js,jsx,ts,tsx}",
     "./public/index.html"
   ],
   theme: {

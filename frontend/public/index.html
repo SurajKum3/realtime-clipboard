@@ -2,40 +2,68 @@
 <html lang="en">
     <head>
         <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <meta name="theme-color" content="#000000" />
-        <meta name="description" content="Realtime Clipboard Sharing" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+        <meta name="theme-color" content="#F8FAFC" />
+        <meta name="color-scheme" content="light" />
+        <meta name="description" content="Create a room, share the code, and sync text and images in realtime across your devices." />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+        <meta name="apple-mobile-web-app-title" content="OnBoard" />
+        <meta name="format-detection" content="telephone=no" />
+        <meta property="og:title" content="OnBoard.in | Realtime Clipboard Sharing" />
+        <meta property="og:description" content="Create a room, share the code, and sync text and images in realtime across your devices." />
+        <meta property="og:type" content="website" />
+        <link rel="icon" href="%PUBLIC_URL%/favicon.svg" type="image/svg+xml" />
+        <link rel="icon" href="%PUBLIC_URL%/icon-192.png" type="image/png" sizes="192x192" />
+        <link rel="apple-touch-icon" href="%PUBLIC_URL%/apple-touch-icon.png" />
+        <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+        <!--
+        Web fonts must never hold up the first paint: the stylesheet is fetched as a low priority
+        "print" sheet and switched on once it arrives. System fonts are used until then.
+        -->
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@600&display=swap" rel="stylesheet" />
-        <!--
-        manifest.json provides metadata used when your web app is installed on a
-        user's mobile device or desktop. See https://developers.google.com/web/fundamentals/web-app-manifest/
-        -->
-        <!--
-        Notice the use of %PUBLIC_URL% in the tags above.
-        It will be replaced with the URL of the `public` folder during the build.
-        Only files inside the `public` folder can be referenced from the HTML.
-
-        Unlike "/favicon.ico" or "favicon.ico", "%PUBLIC_URL%/favicon.ico" will
-        work correctly both with client-side routing and a non-root public URL.
-        Learn how to configure a non-root public URL by running `npm run build`.
-        -->
+        <link
+            rel="stylesheet"
+            href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600&family=Manrope:wght@700;800&display=swap"
+            media="print"
+            onload="this.media='all'"
+        />
+        <noscript>
+            <link
+                rel="stylesheet"
+                href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600&family=Manrope:wght@700;800&display=swap"
+            />
+        </noscript>
         <title>OnBoard.in | Realtime Clipboard Sharing</title>
+        <style>
+            /* Painted before the stylesheet and scripts arrive */
+            html, body { margin: 0; background-color: #F8FAFC; }
+        </style>
         <script>window.addEventListener("error",function(e){if(e.error instanceof DOMException&&e.error.name==="DataCloneError"&&e.message&&e.message.includes("PerformanceServerTiming")){e.stopImmediatePropagation();e.preventDefault()}},true);</script>
     </head>
     <body>
         <noscript>You need to enable JavaScript to run this app.</noscript>
-        <div id="root"></div>
         <!--
-      This HTML file is a template.
-      If you open it directly in the browser, you will see an empty page.
-
-      You can add webfonts, meta tags, or analytics to this file.
-      The build step will place the bundled scripts into the <body> tag.
-
-      To begin the development, run `npm start` or `yarn start`.
-      To create a production bundle, use `npm run build` or `yarn build`.
-    -->
+        Static copy of the top of the home screen, shown while the scripts download.
+        React replaces it on startup - keep it in sync with the home view in src/App.js.
+        -->
+        <div id="root">
+            <div class="onboard-app">
+                <div class="hero-bg"></div>
+                <div class="main-content">
+                    <header class="header">
+                        <div class="logo"><span class="logo-dot"></span>OnBoard.in</div>
+                    </header>
+                    <section class="hero-section">
+                        <h1 class="hero-title gradient-text">Realtime Clipboard</h1>
+                        <p class="hero-subtitle">
+                            Create a room, share the code, and sync your clipboard in realtime across devices.
+                        </p>
+                    </section>
+                </div>
+            </div>
+        </div>
     </body>
 </html>

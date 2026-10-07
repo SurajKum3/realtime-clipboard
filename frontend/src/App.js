@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import QRCode from "react-qr-code";
 import { Toaster, toast } from "sonner";
@@ -19,272 +19,140 @@ import {
   ArrowLeft,
   Download
 } from "lucide-react";
-import axios from "axios";
+import { api } from "@/lib/api";
+import { useClipboardRoom } from "@/hooks/useClipboardRoom";
 import "@/App.css";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = "http://localhost:8000/api";
+const ROOM_CODE_LENGTH = 6;
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
 
-// Derive WebSocket URL from backend URL
-const getWebSocketUrl = (roomCode) => {
-  const wsProtocol = BACKEND_URL.startsWith('https') ? 'wss' : 'ws';
-  const wsHost = BACKEND_URL.replace(/^https?:\/\//, '');
-  return `${wsProtocol}://${wsHost}/ws/${roomCode}`;
-};
+const cleanRoomCode = (value) =>
+  (value || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, ROOM_CODE_LENGTH);
 
 // Animation variants
-const fadeInUp = {
-  initial: { opacity: 0, y: 20 },
-  animate: { opacity: 1, y: 0 },
-  exit: { opacity: 0, y: -10 }
-};
-
 const scaleIn = {
   initial: { opacity: 0, scale: 0.95 },
   animate: { opacity: 1, scale: 1 },
   exit: { opacity: 0, scale: 0.95 }
 };
 
+// navigator.clipboard only exists on HTTPS/localhost, so fall back to the legacy copy command
+const copyText = async (text) => {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const helper = document.createElement("textarea");
+  helper.value = text;
+  helper.setAttribute("readonly", "");
+  helper.style.position = "fixed";
+  helper.style.opacity = "0";
+  document.body.appendChild(helper);
+  helper.select();
+  const copied = document.execCommand("copy");
+  document.body.removeChild(helper);
+  if (!copied) throw new Error("Copy failed");
+};
+
+// Where a caret at `position` in oldText should sit after the text becomes newText
+const shiftCaret = (position, oldText, newText) => {
+  const maxCommon = Math.min(oldText.length, newText.length);
+  let prefix = 0;
+  while (prefix < maxCommon && oldText[prefix] === newText[prefix]) prefix++;
+  let suffix = 0;
+  while (
+    suffix < maxCommon - prefix &&
+    oldText[oldText.length - 1 - suffix] === newText[newText.length - 1 - suffix]
+  ) suffix++;
+
+  if (position <= prefix) return position;
+  if (position >= oldText.length - suffix) return position + newText.length - oldText.length;
+  return newText.length - suffix;
+};
+
+const setRoomInUrl = (code) => {
+  const url = code ? `${window.location.pathname}?join=${code}` : window.location.pathname;
+  window.history.replaceState(null, "", url);
+};
+
 function App() {
-  // View state: "home" | "room"
-  const [view, setView] = useState("home");
-  
   // Room state
-  const [roomCode, setRoomCode] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
-  
-  // Clipboard content state
-  const [content, setContent] = useState("");
-  const [contentType, setContentType] = useState("text"); // "text" | "image"
-  const [imagePreview, setImagePreview] = useState("");
-  
-  // Connection state
-  const [isConnected, setIsConnected] = useState(false);
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false); // HTTP polling active
-  const [clientCount, setClientCount] = useState(0);
+
+  // Which tab is shown: "text" | "image" (follows the shared content when it changes)
+  const [mode, setMode] = useState("text");
   const [codeCopied, setCodeCopied] = useState(false);
   const [showQR, setShowQR] = useState(false);
-  
+
   // Refs
-  const wsRef = useRef(null);
-  const pingIntervalRef = useRef(null);
-  const pollIntervalRef = useRef(null);
   const fileInputRef = useRef(null);
-  const syncTimeoutRef = useRef(null);
-  const lastContentRef = useRef("");
-  
+  const textareaRef = useRef(null);
+  const pendingSelectionRef = useRef(null);
+  const autoJoinedRef = useRef(false);
+
+  const resetRoomUi = () => {
+    setRoomInUrl("");
+    setMode("text");
+    setShowQR(false);
+    setJoinCode("");
+    pendingSelectionRef.current = null;
+  };
+
+  // Realtime sync for the current room (content, connection state, user count)
+  const room = useClipboardRoom({
+    onRemoteContent: (nextContent, nextType) => {
+      setMode(nextType);
+      // Keep the caret where the user left it when someone else edits the text
+      const textarea = textareaRef.current;
+      if (nextType === "text" && textarea && document.activeElement === textarea && textarea.value !== nextContent) {
+        pendingSelectionRef.current = {
+          start: shiftCaret(textarea.selectionStart, textarea.value, nextContent),
+          end: shiftCaret(textarea.selectionEnd, textarea.value, nextContent)
+        };
+      }
+    },
+    onRoomGone: () => {
+      resetRoomUi();
+      toast.error("This room has expired or no longer exists");
+    },
+    onSendError: (message) => toast.error(message)
+  });
+
+  const { roomCode, content, contentType, status, clientCount } = room;
+  const view = roomCode ? "room" : "home";
+  const text = contentType === "text" ? content : "";
+  const imagePreview = contentType === "image" ? content : "";
+  const isLive = status === "live" || status === "polling";
+  const isConnecting = status === "connecting";
+
   // Calculate line count
-  const lineCount = content.split('\n').length;
+  const lineCount = text.split('\n').length;
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      disconnectWebSocket();
-    };
-  }, []);
-
-  // HTTP Polling fallback for when WebSocket fails
-  const startPolling = useCallback((code) => {
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
+  useLayoutEffect(() => {
+    const selection = pendingSelectionRef.current;
+    if (selection && textareaRef.current) {
+      textareaRef.current.setSelectionRange(selection.start, selection.end);
     }
-    
-    setIsSyncing(true);
-    
-    pollIntervalRef.current = setInterval(async () => {
-      try {
-        const response = await axios.post(`${API}/room/join`, { room_code: code });
-        const serverContent = response.data.content || "";
-        const serverType = response.data.content_type || "text";
-        
-        // Only update if content changed and wasn't our own update
-        if (serverContent !== lastContentRef.current) {
-          lastContentRef.current = serverContent;
-          setContent(serverContent);
-          setContentType(serverType);
-          if (serverType === "image") {
-            setImagePreview(serverContent);
-          }
-          setClientCount(response.data.client_count || 1);
-        }
-      } catch (error) {
-        console.log('Polling error:', error.message);
-      }
-    }, 1000); // Poll every 1 second for faster sync
-  }, []);
+    pendingSelectionRef.current = null;
+  }, [content]);
 
-  const stopPolling = useCallback(() => {
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
-    }
-    setIsSyncing(false);
-  }, []);
-
-  // Connect to WebSocket
-  const connectWebSocket = useCallback((code) => {
-    if (wsRef.current) {
-      wsRef.current.close();
-    }
-    if (pingIntervalRef.current) {
-      clearInterval(pingIntervalRef.current);
-    }
-
-    setIsConnecting(true);
-    setIsConnected(false);
-    
-    const wsUrl = getWebSocketUrl(code);
-    console.log('Connecting to WebSocket:', wsUrl);
-    
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      console.log('WebSocket connected');
-      setIsConnected(true);
-      setIsConnecting(false);
-      
-      // Start ping interval
-      pingIntervalRef.current = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'ping' }));
-        }
-      }, 30000);
-      
-      toast.success("Connected to clipboard room!", {
-        icon: <Wifi size={16} />,
-        duration: 2000
-      });
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        console.log('WebSocket message:', data.type);
-        
-        if (data.type === 'sync') {
-          // Initial sync when joining
-          setContent(data.content || "");
-          setContentType(data.content_type || "text");
-          if (data.content_type === "image") {
-            setImagePreview(data.content || "");
-          }
-          setClientCount(data.client_count || 1);
-        }
-        else if (data.type === 'content_update') {
-          // Content updated by another client
-          setContent(data.content || "");
-          setContentType(data.content_type || "text");
-          if (data.content_type === "image") {
-            setImagePreview(data.content || "");
-          }
-        }
-        else if (data.type === 'client_count') {
-          setClientCount(data.count || 1);
-        }
-        else if (data.type === 'pong') {
-          console.log('Ping successful');
-        }
-      } catch (e) {
-        console.error('Error parsing WebSocket message:', e);
-      }
-    };
-
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      setIsConnecting(false);
-      // Start HTTP polling as fallback
-      startPolling(code);
-      setIsConnected(true); // Mark as connected via polling
-      toast.info("Using sync fallback mode", { duration: 2000 });
-    };
-
-    ws.onclose = () => {
-      console.log('WebSocket disconnected');
-      setIsConnected(false);
-      setIsConnecting(false);
-      if (pingIntervalRef.current) {
-        clearInterval(pingIntervalRef.current);
-      }
-      // Start polling if we're still in the room
-      if (view === "room" && roomCode) {
-        startPolling(roomCode);
-        setIsConnected(true);
-      }
-    };
-  }, [startPolling, view, roomCode]);
-
-  // Disconnect WebSocket
-  const disconnectWebSocket = useCallback(() => {
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-    if (pingIntervalRef.current) {
-      clearInterval(pingIntervalRef.current);
-    }
-    if (syncTimeoutRef.current) {
-      clearTimeout(syncTimeoutRef.current);
-    }
-    stopPolling();
-    setIsConnected(false);
-    setIsConnecting(false);
-  }, [stopPolling]);
-
-  // Send content update via WebSocket
-  const sendContentUpdate = useCallback((newContent, newContentType = "text") => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        type: newContentType === "image" ? "image_update" : "content_update",
-        content: newContent,
-        content_type: newContentType
-      }));
-    } else {
-      // Fallback to HTTP
-      axios.post(`${API}/room/content`, {
-        room_code: roomCode,
-        content: newContent,
-        content_type: newContentType
-      }).catch(err => console.error('HTTP fallback error:', err));
-    }
-  }, [roomCode]);
-
-  // Handle text change with debounced sync
+  // Handle text change (synced by the room hook with a short debounce)
   const handleContentChange = (e) => {
-    const newContent = e.target.value;
-    setContent(newContent);
-    setContentType("text");
-    lastContentRef.current = newContent; // Track our own changes
-    
-    // Debounce WebSocket updates
-    if (syncTimeoutRef.current) {
-      clearTimeout(syncTimeoutRef.current);
-    }
-    syncTimeoutRef.current = setTimeout(() => {
-      sendContentUpdate(newContent, "text");
-    }, 100); // 100ms debounce for smooth typing
+    pendingSelectionRef.current = null;
+    room.updateContent(e.target.value, "text");
   };
 
   // Create new room
   const handleCreateRoom = async () => {
     setIsCreating(true);
     try {
-      const response = await axios.post(`${API}/room/create`);
+      const response = await api.post("/room/create");
       const code = response.data.room_code;
-      setRoomCode(code);
-      setView("room");
-      setContent("");
-      setContentType("text");
-      setImagePreview("");
-      setClientCount(1); // Current user
-      // Start polling immediately for reliable sync
-      startPolling(code);
-      setIsConnected(true);
-      // Also try WebSocket (will fallback to polling if it fails)
-      connectWebSocket(code);
+      setMode("text");
+      room.enter(code);
+      setRoomInUrl(code);
       toast.success(`Room ${code} created!`);
     } catch (error) {
       console.error("Error creating room:", error);
@@ -295,60 +163,55 @@ function App() {
   };
 
   // Join existing room
-  const handleJoinRoom = async () => {
-    if (!joinCode.trim() || joinCode.length < 6) {
+  const joinRoom = async (rawCode) => {
+    const code = cleanRoomCode(rawCode);
+    if (code.length < ROOM_CODE_LENGTH) {
       toast.error("Please enter a valid 6-character room code");
       return;
     }
 
     setIsJoining(true);
     try {
-      const response = await axios.post(`${API}/room/join`, {
-        room_code: joinCode.toUpperCase()
-      });
-      
-      const code = response.data.room_code;
-      setRoomCode(code);
-      setContent(response.data.content || "");
-      lastContentRef.current = response.data.content || "";
-      setContentType(response.data.content_type || "text");
-      if (response.data.content_type === "image") {
-        setImagePreview(response.data.content || "");
-      }
-      setClientCount(response.data.client_count || 1);
-      setView("room");
-      // Start polling immediately for reliable sync
-      startPolling(code);
-      setIsConnected(true);
-      // Also try WebSocket
-      connectWebSocket(code);
-      toast.success(`Joined room ${code}!`);
+      const response = await api.post("/room/join", { room_code: code });
+      setMode(response.data.content_type || "text");
+      room.enter(response.data.room_code, response.data);
+      setRoomInUrl(response.data.room_code);
+      toast.success(`Joined room ${response.data.room_code}!`);
     } catch (error) {
       console.error("Error joining room:", error);
-      const message = error.response?.data?.detail || "Room not found or expired";
+      const message = error.response?.data?.detail || "Could not join the room. Please try again.";
+      setRoomInUrl("");
       toast.error(message);
     } finally {
       setIsJoining(false);
     }
   };
 
+  const handleJoinRoom = () => joinRoom(joinCode);
+
+  // Join straight from a shared link / QR code (?join=CODE). Also restores the room on refresh
+  useEffect(() => {
+    if (autoJoinedRef.current) return;
+    autoJoinedRef.current = true;
+    const code = cleanRoomCode(new URLSearchParams(window.location.search).get("join"));
+    if (code.length === ROOM_CODE_LENGTH) {
+      setJoinCode(code);
+      joinRoom(code);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Leave room
   const handleLeaveRoom = () => {
-    disconnectWebSocket();
-    setView("home");
-    setRoomCode("");
-    setContent("");
-    setContentType("text");
-    setImagePreview("");
-    setJoinCode("");
-    setClientCount(0);
+    room.leave();
+    resetRoomUi();
     toast.info("Left the room");
   };
 
   // Copy room code
   const handleCopyCode = async () => {
     try {
-      await navigator.clipboard.writeText(roomCode);
+      await copyText(roomCode);
       setCodeCopied(true);
       toast.success("Room code copied!");
       setTimeout(() => setCodeCopied(false), 2000);
@@ -359,9 +222,9 @@ function App() {
 
   // Copy clipboard content
   const handleCopyContent = async () => {
-    if (contentType === "text" && content) {
+    if (text) {
       try {
-        await navigator.clipboard.writeText(content);
+        await copyText(text);
         toast.success("Content copied to clipboard!");
       } catch (error) {
         toast.error("Failed to copy content");
@@ -369,69 +232,72 @@ function App() {
     }
   };
 
-  // Handle image upload
-  const handleImageUpload = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  // Share an image file with the room
+  const shareImage = (file) => {
     if (!file.type.startsWith('image/')) {
       toast.error("Please select an image file");
       return;
     }
 
-    if (file.size > 5 * 1024 * 1024) {
+    if (file.size > MAX_IMAGE_SIZE) {
       toast.error("Image size must be less than 5MB");
       return;
     }
 
     const reader = new FileReader();
     reader.onload = () => {
-      const dataUrl = reader.result;
-      setImagePreview(dataUrl);
-      setContent(dataUrl);
-      setContentType("image");
-      sendContentUpdate(dataUrl, "image");
+      setMode("image");
+      room.updateContent(reader.result, "image", { immediate: true });
       toast.success("Image shared!");
     };
+    reader.onerror = () => toast.error("Could not read that image");
     reader.readAsDataURL(file);
+  };
+  const shareImageRef = useRef(shareImage);
+  shareImageRef.current = shareImage;
+
+  // Handle image upload
+  const handleImageUpload = (e) => {
+    const file = e.target.files?.[0];
+    // Allow picking the same file again later
+    e.target.value = "";
+    if (file) shareImage(file);
   };
 
   // Handle drag and drop
-  const handleDrop = useCallback((e) => {
+  const handleDrop = (e) => {
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
     e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (file && file.type.startsWith('image/')) {
-      if (file.size > 5 * 1024 * 1024) {
-        toast.error("Image size must be less than 5MB");
-        return;
-      }
-      const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = reader.result;
-        setImagePreview(dataUrl);
-        setContent(dataUrl);
-        setContentType("image");
-        sendContentUpdate(dataUrl, "image");
-        toast.success("Image shared!");
-      };
-      reader.readAsDataURL(file);
-    }
-  }, [sendContentUpdate]);
+    shareImage(file);
+  };
+
+  // Paste an image (e.g. a screenshot) anywhere in the room to share it
+  useEffect(() => {
+    if (view !== "room") return;
+    const handlePaste = (e) => {
+      const file = Array.from(e.clipboardData?.files || []).find((f) => f.type.startsWith('image/'));
+      if (!file) return;
+      e.preventDefault();
+      shareImageRef.current(file);
+    };
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [view]);
 
   // Clear image and switch to text
   const handleClearImage = () => {
-    setImagePreview("");
-    setContent("");
-    setContentType("text");
-    sendContentUpdate("", "text");
+    setMode("text");
+    room.updateContent("", "text", { immediate: true });
   };
 
   // Download image
   const handleDownloadImage = () => {
     if (imagePreview) {
+      const extension = (imagePreview.match(/^data:image\/([a-z0-9]+)/i)?.[1] || "png").replace("jpeg", "jpg");
       const link = document.createElement('a');
       link.href = imagePreview;
-      link.download = `onboard-${roomCode}.png`;
+      link.download = `onboard-${roomCode}.${extension}`;
       link.click();
       toast.success("Image downloaded!");
     }
@@ -531,14 +397,20 @@ function App() {
                 className="code-input"
                 placeholder="XXXXXX"
                 value={joinCode}
-                onChange={(e) => setJoinCode(e.target.value.toUpperCase().slice(0, 6))}
-                maxLength={6}
+                onChange={(e) => setJoinCode(cleanRoomCode(e.target.value))}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !isJoining) handleJoinRoom();
+                }}
+                maxLength={ROOM_CODE_LENGTH}
+                autoCapitalize="characters"
+                autoComplete="off"
+                spellCheck={false}
                 data-testid="join-code-input"
               />
               <motion.button
                 className="btn-secondary-full"
                 onClick={handleJoinRoom}
-                disabled={isJoining || joinCode.length < 6}
+                disabled={isJoining || joinCode.length < ROOM_CODE_LENGTH}
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 data-testid="join-room-btn"
@@ -618,13 +490,13 @@ function App() {
             </div>
             
             <div className="connection-info">
-              <div className={`status-badge ${(isConnected || isSyncing) ? 'connected' : isConnecting ? 'connecting' : 'disconnected'}`}>
-                {(isConnected || isSyncing) ? <Wifi size={14} /> : isConnecting ? <Wifi size={14} className="pulse" /> : <WifiOff size={14} />}
-                {(isConnected || isSyncing) ? 'Live' : isConnecting ? 'Connecting...' : 'Offline'}
+              <div className={`status-badge ${isLive ? 'connected' : isConnecting ? 'connecting' : 'disconnected'}`} data-testid="connection-status">
+                {isLive ? <Wifi size={14} /> : isConnecting ? <Wifi size={14} className="pulse" /> : <WifiOff size={14} />}
+                {isLive ? 'Live' : isConnecting ? 'Connecting...' : 'Offline'}
               </div>
               <div className="client-count" data-testid="client-count">
                 <Users size={14} />
-                {clientCount} {clientCount === 1 ? 'user' : 'users'}
+                {Math.max(clientCount, 1)} {clientCount <= 1 ? 'user' : 'users'}
               </div>
             </div>
           </div>
@@ -666,22 +538,17 @@ function App() {
           {/* Mode Toggle */}
           <div className="mode-toggle">
             <button 
-              className={`mode-btn ${contentType === 'text' ? 'active' : ''}`}
-              onClick={() => {
-                if (contentType !== 'text') {
-                  setContentType('text');
-                  setImagePreview('');
-                }
-              }}
+              className={`mode-btn ${mode === 'text' ? 'active' : ''}`}
+              onClick={() => setMode('text')}
               data-testid="text-mode-btn"
             >
               <Clipboard size={18} />
               Text
             </button>
             <button 
-              className={`mode-btn ${contentType === 'image' ? 'active' : ''}`}
+              className={`mode-btn ${mode === 'image' ? 'active' : ''}`}
               onClick={() => {
-                setContentType('image');
+                setMode('image');
                 if (!imagePreview) {
                   fileInputRef.current?.click();
                 }
@@ -702,15 +569,16 @@ function App() {
           </div>
 
           {/* Content Area */}
-          {contentType === 'text' ? (
+          {mode === 'text' ? (
             <div className="text-area-wrapper"
               onDrop={handleDrop}
               onDragOver={(e) => e.preventDefault()}
             >
               <textarea
+                ref={textareaRef}
                 className="clipboard-textarea"
                 placeholder="Paste or type anything here... Content syncs in realtime across all connected devices."
-                value={content}
+                value={text}
                 onChange={handleContentChange}
                 data-testid="clipboard-textarea"
               />
@@ -719,7 +587,7 @@ function App() {
                 <button 
                   className="copy-content-btn"
                   onClick={handleCopyContent}
-                  disabled={!content}
+                  disabled={!text}
                   data-testid="copy-content-btn"
                 >
                   <Copy size={14} />
@@ -761,8 +629,8 @@ function App() {
 
           {/* Sync Indicator */}
           <div className="sync-indicator" data-testid="sync-indicator">
-            <div className={`sync-dot ${(isConnected || isSyncing) ? 'active' : ''}`} />
-            <span>{(isConnected || isSyncing) ? 'Changes sync across all devices' : 'Connecting...'}</span>
+            <div className={`sync-dot ${isLive ? 'active' : ''}`} />
+            <span>{isLive ? 'Changes sync across all devices' : isConnecting ? 'Connecting...' : 'Offline - your changes will sync when you reconnect'}</span>
           </div>
         </motion.div>
       </div>

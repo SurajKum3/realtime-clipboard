@@ -245,7 +245,7 @@ class OnBoardAPITester:
         print(f"   Base URL: {self.base_url}")
         
         # Just validate URL format, can't test actual WebSocket connection easily
-        if "onboard-share.preview.emergentagent.com" in expected_ws_url:
+        if expected_ws_url.startswith("wss://") and expected_ws_url.endswith(f"/ws/{room_code}"):
             print("✅ WebSocket URL format looks correct")
             return True
         else:

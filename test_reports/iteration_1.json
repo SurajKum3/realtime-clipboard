@@ -40,8 +40,7 @@
     "Error handling for invalid share codes"
   ],
   "test_report_links": [
-    "/app/backend_test.py",
-    "/root/.emergent/automation_output/20260307_180816/console_20260307_180816.log"
+    "/app/backend_test.py"
   ],
   "success_percentage": {
     "backend": "100% (7/7 tests passed)",

@@ -51,7 +51,7 @@ Build a premium realtime clipboard web application called **OnBoard.in** - a fas
 - [x] "Live" status indicator shows when sync is active
 - [x] Sync status shows at bottom: "Changes sync across all devices"
 
-**Infrastructure Note**: WebSocket connections blocked by Kubernetes/Cloudflare proxy. HTTP polling provides reliable 1-second sync intervals. For true instant sync (<100ms), contact Emergent support to configure WebSocket proxy in Kubernetes Ingress.
+**Infrastructure Note**: WebSocket connections blocked by Kubernetes/Cloudflare proxy. HTTP polling provides reliable 1-second sync intervals. For true instant sync (<100ms), configure a WebSocket proxy in the Kubernetes Ingress.
 
 ## Tech Stack
 - **Frontend**: React 19, Framer Motion, React QR Code, Sonner

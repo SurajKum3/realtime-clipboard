@@ -49,9 +49,7 @@
   ],
   "test_report_links": [
     "/app/backend_test.py",
-    "/app/websocket_test.py",
-    "/root/.emergent/automation_output/20260307_181719/console_20260307_181719.log",
-    "/root/.emergent/automation_output/20260307_181801/console_20260307_181801.log"
+    "/app/websocket_test.py"
   ],
   "success_percentage": {
     "backend": "100% (7/7 HTTP APIs working)",

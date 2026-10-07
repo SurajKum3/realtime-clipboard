@@ -128,7 +128,7 @@ function App() {
   const isConnecting = status === "connecting";
 
   // Calculate line count
-  const lineCount = text.split('\n').length;
+  const lineCount = text ? text.split('\n').length : 0;
 
   useLayoutEffect(() => {
     const selection = pendingSelectionRef.current;
@@ -271,6 +271,16 @@ function App() {
     e.preventDefault();
     shareImage(file);
   };
+
+  // Close the QR popup with Escape
+  useEffect(() => {
+    if (!showQR) return;
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") setShowQR(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [showQR]);
 
   // Paste an image (e.g. a screenshot) anywhere in the room to share it
   useEffect(() => {
@@ -507,14 +517,15 @@ function App() {
           {showQR && (
             <motion.div
               className="qr-popup"
+              onClick={() => setShowQR(false)}
               variants={scaleIn}
               initial="initial"
               animate="animate"
               exit="exit"
               data-testid="qr-popup"
             >
-              <div className="qr-popup-content">
-                <button className="qr-close" onClick={() => setShowQR(false)}>
+              <div className="qr-popup-content" onClick={(e) => e.stopPropagation()}>
+                <button className="qr-close" onClick={() => setShowQR(false)} aria-label="Close">
                   <X size={20} />
                 </button>
                 <p className="qr-label">Scan to join room</p>
@@ -577,13 +588,15 @@ function App() {
               <textarea
                 ref={textareaRef}
                 className="clipboard-textarea"
-                placeholder="Paste or type anything here... Content syncs in realtime across all connected devices."
+                placeholder={imagePreview
+                  ? "An image is currently shared in this room. Typing here will replace it with text."
+                  : "Paste or type anything here... Content syncs in realtime across all connected devices."}
                 value={text}
                 onChange={handleContentChange}
                 data-testid="clipboard-textarea"
               />
               <div className="textarea-footer">
-                <span className="line-count">{lineCount.toLocaleString()} lines</span>
+                <span className="line-count">{lineCount.toLocaleString()} {lineCount === 1 ? 'line' : 'lines'}</span>
                 <button 
                   className="copy-content-btn"
                   onClick={handleCopyContent}
